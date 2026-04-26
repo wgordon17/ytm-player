@@ -189,6 +189,8 @@ class TrackActionsMixin(YTMHostBase):
             return
 
         if radio_tracks:
+            # New radio session — reset seed history.
+            self._recent_seeds = []
             self.queue.clear()
             self.queue.set_radio_tracks(radio_tracks)
             first = self.queue.next_track()

@@ -11,6 +11,7 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 **New**
 
 - Proactive radio refill: when playing from a radio tail and fewer than 4 tracks remain, a background worker silently fetches more suggestions and appends them to the queue, enabling continuous autoplay without interruption.
+- Multi-seed radio refill: when 3+ tracks have been played, the background refill worker uses up to 3 recently-played video IDs as seeds (via `get_multi_seed_radio`), producing a shuffled mix from multiple radio stations for better variety. Falls back to single-seed for shorter play history.
 
 ---
 

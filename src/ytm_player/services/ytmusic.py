@@ -482,6 +482,38 @@ class YTMusicService:
             logger.exception("get_radio failed for %r", video_id)
             return []
 
+    async def get_multi_seed_radio(self, video_ids: list[str], limit: int = 25) -> list[dict]:
+        """Fetch radio suggestions from multiple seeds and return a deduplicated mix.
+
+        Calls get_radio() sequentially for up to 3 seeds (sequential to avoid rate
+        limiting).  Stops early once the pool reaches 50 unique tracks.  Individual
+        seed failures are swallowed so a single bad ID doesn't abort the batch.
+        Returns the pool shuffled and trimmed to *limit*.
+        """
+        import random
+
+        pool: list[dict] = []
+        seen_ids: set[str] = set()
+        pool_target = 50
+        max_seeds = 3
+
+        for video_id in video_ids[:max_seeds]:
+            try:
+                tracks = await self.get_radio(video_id)
+            except Exception:
+                logger.debug("get_multi_seed_radio: seed %r failed, skipping", video_id)
+                continue
+            for track in tracks:
+                vid = track.get("videoId") or track.get("video_id", "")
+                if vid and vid not in seen_ids:
+                    seen_ids.add(vid)
+                    pool.append(track)
+            if len(pool) >= pool_target:
+                break
+
+        random.shuffle(pool)
+        return pool[:limit]
+
     # ------------------------------------------------------------------
     # Library actions
     # ------------------------------------------------------------------

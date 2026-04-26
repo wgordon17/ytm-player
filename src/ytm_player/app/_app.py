@@ -229,10 +229,10 @@ class YTMPlayerApp(
         self._last_play_video_id: str = ""
         self._last_play_time: float = 0.0
 
-        # Pending resume from prior session (set by _restore_session_state).
-        # Cleared on first matching play_track call.
         self._pending_resume_video_id: str | None = None
         self._pending_resume_position: float = 0.0
+
+        self._recent_seeds: list[str] = []
 
         # Reference to the position poll timer (for cleanup).
         self._poll_timer = None
