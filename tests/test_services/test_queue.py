@@ -376,3 +376,90 @@ class TestRadioTracks:
         ]
         queue_manager.set_radio_tracks(radio)
         assert queue_manager.length == 7
+
+
+class TestRadioTailProvenance:
+    """Tests for _radio_tail_start provenance tracking and real_index."""
+
+    def test_default_radio_tail_start_is_minus_one(self, queue_manager):
+        assert queue_manager.radio_tail_start == -1
+
+    def test_set_radio_tracks_sets_tail_start(self, queue_manager, sample_tracks):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        radio = [{"video_id": "r1", "title": "R1"}, {"video_id": "r2", "title": "R2"}]
+        queue_manager.set_radio_tracks(radio)
+        assert queue_manager.radio_tail_start == 5  # after the 5 existing tracks
+
+    def test_set_radio_tracks_does_not_overwrite_tail_start(self, queue_manager, sample_tracks):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        queue_manager.set_radio_tracks([{"video_id": "r1", "title": "R1"}])
+        first_tail = queue_manager.radio_tail_start
+        queue_manager.set_radio_tracks([{"video_id": "r2", "title": "R2"}])
+        assert queue_manager.radio_tail_start == first_tail  # boundary unchanged
+
+    def test_clear_resets_radio_tail_start(self, queue_manager, sample_tracks):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        queue_manager.set_radio_tracks([{"video_id": "r1", "title": "R1"}])
+        assert queue_manager.radio_tail_start >= 0
+        queue_manager.clear()
+        assert queue_manager.radio_tail_start == -1
+
+    def test_real_index_without_shuffle(self, queue_manager, sample_tracks):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        queue_manager.jump_to(2)
+        assert queue_manager.real_index == 2
+
+    def test_real_index_with_shuffle_resolves_to_tracks_index(self, queue_manager, sample_tracks):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        queue_manager.toggle_shuffle()
+        # After toggling shuffle, jump_to(0) should make real_index == shuffle_order[0].
+        queue_manager.jump_to(0)
+        # real_index must be a valid _tracks index, not the shuffle position.
+        assert 0 <= queue_manager.real_index < len(sample_tracks)
+
+    def test_remove_before_tail_decrements_radio_tail_start(self, queue_manager, sample_tracks):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        queue_manager.set_radio_tracks([{"video_id": "r1", "title": "R1"}])
+        original_tail = queue_manager.radio_tail_start  # == 5
+        queue_manager.jump_to(0)
+        queue_manager.remove(0)  # remove first track (index < tail)
+        assert queue_manager.radio_tail_start == original_tail - 1
+
+    def test_remove_after_tail_does_not_change_radio_tail_start(self, queue_manager, sample_tracks):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        queue_manager.set_radio_tracks([{"video_id": "r1", "title": "R1"}])
+        original_tail = queue_manager.radio_tail_start  # == 5
+        queue_manager.remove(5)  # remove the radio track itself
+        assert queue_manager.radio_tail_start == original_tail  # unchanged
+
+    def test_add_unlocked_before_tail_increments_radio_tail_start(
+        self, queue_manager, sample_tracks
+    ):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        queue_manager.set_radio_tracks([{"video_id": "r1", "title": "R1"}])
+        original_tail = queue_manager.radio_tail_start  # == 5
+        from tests.conftest import _make_track
+
+        queue_manager.jump_to(0)
+        # add at position 0 (before tail)
+        queue_manager.add(_make_track("inserted", "Inserted"), position=0)
+        assert queue_manager.radio_tail_start == original_tail + 1
+
+    def test_move_non_shuffle_adjusts_radio_tail_start(self, queue_manager, sample_tracks):
+        for t in sample_tracks:
+            queue_manager.add(t)
+        queue_manager.set_radio_tracks([{"video_id": "r1", "title": "R1"}])
+        original_tail = queue_manager.radio_tail_start  # == 5
+        queue_manager.jump_to(0)
+        # Moving from idx 6 (past tail) to idx 2 (before tail): tail shifts up.
+        # Actually let's test moving from before tail to past tail.
+        queue_manager.move(0, 5)  # from_idx=0 < tail=5 <= to_idx=5: tail decrements
+        assert queue_manager.radio_tail_start == original_tail - 1

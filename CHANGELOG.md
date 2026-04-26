@@ -6,6 +6,14 @@ Format follows [Keep a Changelog](https://keepachangelog.com/).
 
 ---
 
+### Unreleased
+
+**New**
+
+- Proactive radio refill: when playing from a radio tail and fewer than 4 tracks remain, a background worker silently fetches more suggestions and appends them to the queue, enabling continuous autoplay without interruption.
+
+---
+
 ### v1.8.0 (2026-04-28)
 
 A reliability and quality release driven by a multi-agent expert audit. Hardens error handling across the service/UI cascade so silent-failure UX is replaced with actionable feedback, fixes several latent runtime bugs, and brings the codebase to zero non-exempted Pyright errors (down from 218).

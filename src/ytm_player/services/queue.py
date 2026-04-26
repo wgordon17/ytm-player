@@ -59,6 +59,11 @@ class QueueManager:
         self._shuffle_order: list[int] = []
         self._shuffle_position: int = -1
 
+        # Index into _tracks where the radio-appended tail begins.
+        # -1 means not currently in radio mode. Set once by set_radio_tracks();
+        # subsequent refill calls preserve the original boundary.
+        self._radio_tail_start: int = -1
+
     # -- Properties -------------------------------------------------------
 
     @property
@@ -98,6 +103,18 @@ class QueueManager:
     @property
     def shuffle_enabled(self) -> bool:
         return self._shuffle
+
+    @property
+    def real_index(self) -> int:
+        """Current index into _tracks regardless of shuffle mode."""
+        with self._lock:
+            return self._real_index()
+
+    @property
+    def radio_tail_start(self) -> int:
+        """Index in _tracks where the radio tail begins, or -1 if not in radio mode."""
+        with self._lock:
+            return self._radio_tail_start
 
     # -- Helpers ----------------------------------------------------------
 
@@ -141,6 +158,8 @@ class QueueManager:
             # Adjust current index if we inserted before it.
             if not self._shuffle and position <= self._current_index:
                 self._current_index += 1
+            if self._radio_tail_start >= 0 and position <= self._radio_tail_start:
+                self._radio_tail_start += 1
 
         if self._shuffle:
             # Insert the new track at a random future position in shuffle order.
@@ -207,6 +226,8 @@ class QueueManager:
                 del self._tracks[real_idx]
                 if index <= self._shuffle_position and self._shuffle_position > 0:
                     self._shuffle_position -= 1
+                if self._radio_tail_start >= 0 and real_idx < self._radio_tail_start:
+                    self._radio_tail_start -= 1
             else:
                 del self._tracks[index]
                 if index < self._current_index:
@@ -215,6 +236,8 @@ class QueueManager:
                     # Current track removed; clamp index.
                     if self._current_index >= len(self._tracks):
                         self._current_index = len(self._tracks) - 1
+                if self._radio_tail_start >= 0 and index < self._radio_tail_start:
+                    self._radio_tail_start -= 1
 
     def clear(self) -> None:
         """Remove all tracks from the queue.
@@ -229,6 +252,7 @@ class QueueManager:
             self._current_index = -1
             self._shuffle_order.clear()
             self._shuffle_position = -1
+            self._radio_tail_start = -1
 
     def move(self, from_idx: int, to_idx: int) -> None:
         """Move a track from one position to another in the visible order."""
@@ -262,6 +286,12 @@ class QueueManager:
                     self._current_index -= 1
                 elif to_idx <= self._current_index < from_idx:
                     self._current_index += 1
+                # Adjust radio tail boundary when a track crosses it.
+                if self._radio_tail_start >= 0:
+                    if from_idx < self._radio_tail_start <= to_idx:
+                        self._radio_tail_start -= 1
+                    elif to_idx <= self._radio_tail_start < from_idx:
+                        self._radio_tail_start += 1
 
     # -- Playback navigation ----------------------------------------------
 
@@ -415,6 +445,9 @@ class QueueManager:
             new_tracks = [t for t in tracks if t.get("video_id") not in existing_ids]
             if new_tracks:
                 logger.debug("Adding %d radio tracks to queue", len(new_tracks))
+                # Mark where the radio tail begins — only the first call sets this.
+                if self._radio_tail_start == -1:
+                    self._radio_tail_start = len(self._tracks)
                 # Use internal unlocked path since we already hold the lock.
                 start_idx = len(self._tracks)
                 self._tracks.extend(new_tracks)

@@ -11,7 +11,7 @@ from ytm_player.app._base import YTMHostBase
 from ytm_player.ui.header_bar import HeaderBar
 from ytm_player.ui.playback_bar import PlaybackBar
 from ytm_player.ui.widgets.track_table import TrackTable
-from ytm_player.utils.formatting import get_video_id
+from ytm_player.utils.formatting import get_video_id, normalize_tracks
 
 logger = logging.getLogger(__name__)
 
@@ -241,6 +241,7 @@ class PlaybackMixin(YTMHostBase):
         """Advance to the next track in the queue and play it."""
         track = self.queue.next_track()
         if track:
+            self._maybe_refill_radio(track)
             await self.play_track(track)
         elif self.settings.playback.autoplay:
             # Use the ended track for radio seed when player.current_track
@@ -273,6 +274,11 @@ class PlaybackMixin(YTMHostBase):
         if not self.ytmusic:
             return
 
+        # If a background refill is already running, don't kick off a second fetch.
+        for worker in self.workers:
+            if worker.group == "radio-refill" and worker.is_running:
+                return
+
         track = seed_track or (self.player.current_track if self.player else None)
         if not track:
             return
@@ -283,8 +289,6 @@ class PlaybackMixin(YTMHostBase):
 
         self.notify("Loading radio suggestions...", timeout=3)
         try:
-            from ytm_player.utils.formatting import normalize_tracks
-
             radio_tracks = normalize_tracks(await self.ytmusic.get_radio(video_id))
             if radio_tracks:
                 self.queue.set_radio_tracks(radio_tracks)
@@ -296,6 +300,47 @@ class PlaybackMixin(YTMHostBase):
             logger.exception("Failed to fetch radio tracks")
 
         self.notify("No more suggestions available. Add more tracks to your queue.", timeout=3)
+
+    def _maybe_refill_radio(self, track: dict) -> None:
+        """Synchronous guard: schedule a background radio refill when needed.
+
+        Fires only when:
+        - Repeat mode is off (infinite queue growth in repeat mode is undesirable)
+        - Autoplay is enabled
+        - The queue is currently in radio mode (radio_tail_start >= 0)
+        - The current track is inside the radio tail (not in manually-queued content)
+        - Fewer than 4 tracks remain after this one
+        - No radio-refill worker is already running
+        """
+        if self.queue.repeat_mode != "off":
+            return
+        if not self.settings.playback.autoplay:
+            return
+        tail_start = self.queue.radio_tail_start
+        if tail_start < 0:
+            return
+        if self.queue.real_index < tail_start:
+            return
+        remaining = self.queue.length - self.queue.real_index - 1
+        if remaining > 3:
+            return
+        for worker in self.workers:
+            if worker.group == "radio-refill" and worker.is_running:
+                return
+        self.run_worker(self._do_refill_radio(track), group="radio-refill", exclusive=True)
+
+    async def _do_refill_radio(self, track: dict) -> None:
+        """Background worker: fetch new radio tracks and append them to the queue."""
+        try:
+            video_id = track.get("video_id", "")
+            if not video_id:
+                return
+            result = await self.ytmusic.get_radio(video_id)
+            tracks = normalize_tracks(result)
+            if tracks:
+                self.queue.set_radio_tracks(tracks)
+        except Exception:
+            logger.debug("Radio refill failed", exc_info=True)
 
     # ── Player event callbacks ───────────────────────────────────────
 
